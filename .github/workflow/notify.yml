@@ -1,0 +1,36 @@
+name: Yonsei GSE Notice Monitor
+
+on:
+  schedule:
+    # 매일 한국 시간(KST) 오전 10시 = UTC 기준 오전 1시
+    - cron: '0 1 * * *'
+  workflow_dispatch: # 필요할 때 수동 실행 기능 유지
+
+jobs:
+  check-notice:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 google-generativeai
+
+      - name: Run script
+        env:
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+        run: python crawler.py
+
+      - name: Commit and push if last_post.txt updated
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add last_post.txt
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: update last post id" && git push)
