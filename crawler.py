@@ -399,11 +399,48 @@ def send_notice_email(posts_with_summaries):
     message.set_content("\n".join(sections))
 
     context = ssl.create_default_context()
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=REQUEST_TIMEOUT) as smtp:
-        smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-        smtp.send_message(message)
+    # GitHub-hosted runners or network routes can drop the implicit-SSL
+    # connection on port 465. Try Gmail's STARTTLS endpoint on 587 as well.
+    connection_methods = (
+        ("STARTTLS", 587),
+        ("SSL", 465),
+    )
+    last_error = None
 
-    print(f"이메일 전송 성공: {NOTIFY_EMAIL}")
+    for security, port in connection_methods:
+        try:
+            if security == "STARTTLS":
+                with smtplib.SMTP(
+                    "smtp.gmail.com",
+                    port,
+                    timeout=REQUEST_TIMEOUT
+                ) as smtp:
+                    smtp.ehlo()
+                    smtp.starttls(context=context)
+                    smtp.ehlo()
+                    smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+                    smtp.send_message(message)
+            else:
+                with smtplib.SMTP_SSL(
+                    "smtp.gmail.com",
+                    port,
+                    context=context,
+                    timeout=REQUEST_TIMEOUT
+                ) as smtp:
+                    smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+                    smtp.send_message(message)
+
+            print(f"이메일 전송 성공: {NOTIFY_EMAIL}")
+            return
+        except (smtplib.SMTPException, OSError) as error:
+            last_error = error
+            print(f"Gmail SMTP {security} {port} 연결 실패: {error}")
+
+    raise RuntimeError(
+        "Gmail SMTP 전송에 실패했습니다. GMAIL_ADDRESS가 전체 Gmail 주소인지, "
+        "GMAIL_APP_PASSWORD가 2단계 인증 후 발급한 앱 비밀번호인지 확인하세요. "
+        f"마지막 SMTP 오류: {last_error}"
+    ) from last_error
 
 
 # ============================================================
