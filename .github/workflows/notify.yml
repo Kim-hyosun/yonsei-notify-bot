@@ -58,19 +58,19 @@ jobs:
 
         env:
 
-          # Kakao
-          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
-          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
-          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
-
           # Yonsei
           BOARD_URL: ${{ secrets.BOARD_URL }}
 
           # Gemini
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
 
+          # Gmail SMTP
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+
           # State file
-          LAST_POST_FILE: ${{ secrets.LAST_POST_FILE }}
+          LAST_POST_FILE: last_post.txt
 
         run: |
           python crawler.py

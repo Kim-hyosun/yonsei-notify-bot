@@ -1,7 +1,9 @@
-import json
 import os
 import re
+import smtplib
+import ssl
 import time
+from email.message import EmailMessage
 from urllib.parse import urljoin
 
 import requests
@@ -13,13 +15,12 @@ from google import genai
 # 환경변수
 # ============================================================
 
-KAKAO_REST_API_KEY = os.environ.get("KAKAO_REST_API_KEY")
-KAKAO_CLIENT_SECRET = os.environ.get("KAKAO_CLIENT_SECRET")
-KAKAO_REFRESH_TOKEN = os.environ.get("KAKAO_REFRESH_TOKEN")
-
 BOARD_URL = os.environ.get("BOARD_URL")
 AI_API_KEY = os.environ.get("AI_API_KEY")
-LAST_POST_FILE = os.environ.get("LAST_POST_FILE")
+GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
+NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL")
+LAST_POST_FILE = os.environ.get("LAST_POST_FILE", "last_post.txt")
 
 
 BASE_URL = "https://gse.yonsei.ac.kr"
@@ -32,16 +33,12 @@ REQUEST_TIMEOUT = 20
 
 def validate_env():
     required = {
-        "KAKAO_REST_API_KEY": KAKAO_REST_API_KEY,
-        "KAKAO_REFRESH_TOKEN": KAKAO_REFRESH_TOKEN,
         "BOARD_URL": BOARD_URL,
         "AI_API_KEY": AI_API_KEY,
-        "LAST_POST_FILE": LAST_POST_FILE,
+        "GMAIL_ADDRESS": GMAIL_ADDRESS,
+        "GMAIL_APP_PASSWORD": GMAIL_APP_PASSWORD,
+        "NOTIFY_EMAIL": NOTIFY_EMAIL,
     }
-
-    # Client Secret은 카카오 앱 설정에서 활성화된 경우 필요
-    if KAKAO_CLIENT_SECRET:
-        print("Kakao Client Secret 사용")
 
     missing = [
         name
@@ -379,136 +376,34 @@ def summarize_with_gemini(title, content):
 
 
 # ============================================================
-# Kakao Access Token 갱신
+# Gmail 이메일 전송
 # ============================================================
 
-def get_kakao_access_token():
+def send_notice_email(posts_with_summaries):
+    message = EmailMessage()
+    message["From"] = GMAIL_ADDRESS
+    message["To"] = NOTIFY_EMAIL
+    message["Subject"] = f"[연세대 교육대학원 새 공지] {len(posts_with_summaries)}건"
 
-    url = "https://kauth.kakao.com/oauth/token"
+    sections = ["연세대학교 교육대학원 새 공지 요약입니다."]
+    for post, summary in posts_with_summaries:
+        sections.extend([
+            "",
+            "=" * 60,
+            post["title"],
+            f"게시글 번호: {post['id']}",
+            f"원문: {post['url']}",
+            "",
+            summary,
+        ])
+    message.set_content("\n".join(sections))
 
-    data = {
-        "grant_type": "refresh_token",
-        "client_id": KAKAO_REST_API_KEY,
-        "refresh_token": KAKAO_REFRESH_TOKEN,
-    }
+    context = ssl.create_default_context()
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=REQUEST_TIMEOUT) as smtp:
+        smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+        smtp.send_message(message)
 
-    if KAKAO_CLIENT_SECRET:
-        data["client_secret"] = KAKAO_CLIENT_SECRET
-
-    response = requests.post(
-        url,
-        data=data,
-        timeout=REQUEST_TIMEOUT
-    )
-
-    try:
-        result = response.json()
-    except Exception:
-        raise RuntimeError(
-            "Kakao token API 응답 파싱 실패: "
-            + response.text
-        )
-
-    if response.status_code != 200:
-
-        raise RuntimeError(
-            "Kakao Access Token 갱신 실패: "
-            + json.dumps(
-                result,
-                ensure_ascii=False
-            )
-        )
-
-    access_token = result.get(
-        "access_token"
-    )
-
-    if not access_token:
-        raise RuntimeError(
-            "Kakao 응답에 access_token이 없습니다: "
-            + json.dumps(
-                result,
-                ensure_ascii=False
-            )
-        )
-
-    return access_token
-
-
-# ============================================================
-# Kakao 메시지 전송
-# ============================================================
-
-def send_kakao_message(
-    access_token,
-    title,
-    summary,
-    link
-):
-
-    url = (
-        "https://kapi.kakao.com"
-        "/v2/api/talk/memo/default/send"
-    )
-
-    headers = {
-        "Authorization": (
-            f"Bearer {access_token}"
-        ),
-        "Content-Type": (
-            "application/x-www-form-urlencoded"
-        ),
-    }
-
-    text = (
-        "📢 연세대 교육대학원 새 공지\n\n"
-        f"📌 {title}\n\n"
-        f"{summary}"
-    )
-
-    template_object = {
-        "object_type": "text",
-        "text": text,
-        "link": {
-            "web_url": link,
-            "mobile_web_url": link,
-        },
-        "button_title": "공지 확인하기",
-    }
-
-    response = requests.post(
-        url,
-        headers=headers,
-        data={
-            "template_object": json.dumps(
-                template_object,
-                ensure_ascii=False
-            )
-        },
-        timeout=REQUEST_TIMEOUT
-    )
-
-    try:
-        result = response.json()
-    except Exception:
-        result = response.text
-
-    if response.status_code != 200:
-
-        print(
-            "Kakao 메시지 전송 실패:",
-            response.status_code,
-            result
-        )
-
-        return False
-
-    print(
-        "Kakao 메시지 전송 성공:",
-        result
-    )
-
-    return True
+    print(f"이메일 전송 성공: {NOTIFY_EMAIL}")
 
 
 # ============================================================
@@ -600,9 +495,7 @@ def check_latest_notices():
             f"{latest_id}"
         )
 
-        print(
-            "기존 공지사항은 카카오톡으로 보내지 않습니다."
-        )
+        print("기존 공지사항은 이메일로 보내지 않습니다.")
 
         return
 
@@ -627,14 +520,7 @@ def check_latest_notices():
     )
 
     # --------------------------------------------------------
-    # Kakao Token
-    # --------------------------------------------------------
-
-    access_token = (
-        get_kakao_access_token()
-    )
-
-    max_success_id = last_id
+    summarized_posts = []
 
     # --------------------------------------------------------
     # 신규 공지 처리
@@ -671,42 +557,26 @@ def check_latest_notices():
         print("Gemini 요약:")
         print(summary)
 
-        # Kakao 전송
-        success = send_kakao_message(
-            access_token=access_token,
-            title=post["title"],
-            summary=summary,
-            link=post["url"]
-        )
-
-        if not success:
-
-            raise RuntimeError(
-                f"카카오톡 전송 실패: "
-                f"{post['id']}"
-            )
-
-        max_success_id = max(
-            max_success_id,
-            post["id"]
-        )
+        summarized_posts.append((post, summary))
 
         # API 호출 간격
         time.sleep(1.5)
 
     # --------------------------------------------------------
-    # 모든 전송 성공 후 기준 ID 업데이트
+    # 이메일 전송 성공 후 기준 ID 업데이트
     # --------------------------------------------------------
 
+    send_notice_email(summarized_posts)
+
     save_last_post_id(
-        max_success_id
+        max(post["id"] for post, _ in summarized_posts)
     )
 
     print()
     print("=" * 60)
     print(
         f"기준 ID 업데이트 완료: "
-        f"{max_success_id}"
+        f"{max(post['id'] for post, _ in summarized_posts)}"
     )
     print("=" * 60)
 
