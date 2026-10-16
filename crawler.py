@@ -405,42 +405,45 @@ def send_notice_email(posts_with_summaries):
         ("STARTTLS", 587),
         ("SSL", 465),
     )
-    last_error = None
+    errors = []
 
     for security, port in connection_methods:
-        try:
-            if security == "STARTTLS":
-                with smtplib.SMTP(
-                    "smtp.gmail.com",
-                    port,
-                    timeout=REQUEST_TIMEOUT
-                ) as smtp:
-                    smtp.ehlo()
-                    smtp.starttls(context=context)
-                    smtp.ehlo()
-                    smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-                    smtp.send_message(message)
-            else:
-                with smtplib.SMTP_SSL(
-                    "smtp.gmail.com",
-                    port,
-                    context=context,
-                    timeout=REQUEST_TIMEOUT
-                ) as smtp:
-                    smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-                    smtp.send_message(message)
+        for attempt in range(1, 4):
+            try:
+                if security == "STARTTLS":
+                    with smtplib.SMTP(
+                        "smtp.gmail.com",
+                        port,
+                        timeout=REQUEST_TIMEOUT
+                    ) as smtp:
+                        smtp.ehlo()
+                        smtp.starttls(context=context)
+                        smtp.ehlo()
+                        smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+                        smtp.send_message(message)
+                else:
+                    with smtplib.SMTP_SSL(
+                        "smtp.gmail.com",
+                        port,
+                        context=context,
+                        timeout=REQUEST_TIMEOUT
+                    ) as smtp:
+                        smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+                        smtp.send_message(message)
 
-            print(f"이메일 전송 성공: {NOTIFY_EMAIL}")
-            return
-        except (smtplib.SMTPException, OSError) as error:
-            last_error = error
-            print(f"Gmail SMTP {security} {port} 연결 실패: {error}")
+                print(f"이메일 전송 성공: {NOTIFY_EMAIL}")
+                return
+            except (smtplib.SMTPException, OSError) as error:
+                errors.append(f"{security} {port}회차 {attempt}: {error}")
+                print(f"Gmail SMTP {security} {port} 연결 실패 ({attempt}/3): {error}")
+                if attempt < 3:
+                    time.sleep(attempt * 2)
 
     raise RuntimeError(
         "Gmail SMTP 전송에 실패했습니다. GMAIL_ADDRESS가 전체 Gmail 주소인지, "
         "GMAIL_APP_PASSWORD가 2단계 인증 후 발급한 앱 비밀번호인지 확인하세요. "
-        f"마지막 SMTP 오류: {last_error}"
-    ) from last_error
+        "포트별 오류: " + " | ".join(errors)
+    )
 
 
 # ============================================================
