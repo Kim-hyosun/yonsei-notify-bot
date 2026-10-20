@@ -588,10 +588,21 @@ def check_latest_notices():
         )
 
         # Gemini 요약
-        summary = summarize_with_gemini(
-            post["title"],
-            content
-        )
+        try:
+            summary = summarize_with_gemini(
+                post["title"],
+                content
+            )
+        except Exception as error:
+            # Gemini outages should not prevent the remaining notices from
+            # being emailed. Keep the source link so the notice is still usable.
+            print(
+                f"Gemini 요약 실패: {type(error).__name__}: {error}"
+            )
+            summary = (
+                "요약을 생성하지 못했습니다. 원문을 확인해 주세요.\n"
+                f"원문: {post['url']}"
+            )
 
         print()
         print("Gemini 요약:")
