@@ -8,7 +8,6 @@ from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
-from google import genai
 
 
 # ============================================================
@@ -16,7 +15,6 @@ from google import genai
 # ============================================================
 
 BOARD_URL = os.environ.get("BOARD_URL")
-AI_API_KEY = os.environ.get("AI_API_KEY")
 GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
 NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL")
@@ -34,7 +32,6 @@ REQUEST_TIMEOUT = 20
 def validate_env():
     required = {
         "BOARD_URL": BOARD_URL,
-        "AI_API_KEY": AI_API_KEY,
         "GMAIL_ADDRESS": GMAIL_ADDRESS,
         "GMAIL_APP_PASSWORD": GMAIL_APP_PASSWORD,
         "NOTIFY_EMAIL": NOTIFY_EMAIL,
@@ -321,80 +318,21 @@ def get_post_detail(post):
 
 
 # ============================================================
-# Gemini 요약
-# ============================================================
-
-def summarize_with_gemini(title, content):
-    """
-    Gemini를 사용하여 공지사항 핵심 내용을 요약한다.
-    """
-
-    client = genai.Client(
-        api_key=AI_API_KEY
-    )
-
-    prompt = f"""
-너는 연세대학교 교육대학원 학생을 위한
-공지사항 요약 도우미다.
-
-아래 공지사항을 읽고 학생이 실제로 행동해야 하는
-내용을 중심으로 매우 간결하게 요약해라.
-
-[공지 제목]
-{title}
-
-[공지 본문]
-{content}
-
-다음 형식으로만 작성해라.
-
-핵심:
-- 가장 중요한 내용 1~3개
-
-해야 할 일:
-- 학생이 해야 하는 일이 있다면 작성
-- 없다면 "없음"
-
-일정:
-- 신청/제출/시험/행사 등 중요한 날짜
-- 없다면 "없음"
-
-주의:
-- 기한 엄수, 제출 방법, 대상 등 중요한 주의사항
-- 없다면 "없음"
-
-절대로 원문에 없는 내용을 추측하지 마라.
-불필요한 인사말이나 설명은 작성하지 마라.
-"""
-
-    response = client.models.generate_content(
-        model="gemini-3.5-flash-lite",
-        contents=prompt
-    )
-
-    return response.text.strip()
-
-
-# ============================================================
 # Gmail 이메일 전송
 # ============================================================
 
-def send_notice_email(posts_with_summaries):
+def send_notice_email(posts):
     message = EmailMessage()
     message["From"] = GMAIL_ADDRESS
     message["To"] = NOTIFY_EMAIL
-    message["Subject"] = f"[연세대 교육대학원 새 공지] {len(posts_with_summaries)}건"
+    message["Subject"] = f"[연세대 헤드위그] {len(posts)}건"
 
-    sections = ["연세대학교 교육대학원 새 공지 요약입니다."]
-    for post, summary in posts_with_summaries:
+    sections = ["새 공지입니다."]
+    for post in posts:
         sections.extend([
             "",
-            "=" * 60,
             post["title"],
-            f"게시글 번호: {post['id']}",
-            f"원문: {post['url']}",
-            "",
-            summary,
+            post["url"],
         ])
     message.set_content("\n".join(sections))
 
@@ -497,7 +435,7 @@ def check_latest_notices():
     validate_env()
 
     print("=" * 60)
-    print("연세대 교육대학원 공지사항 크롤러 시작")
+    print("공지사항 크롤러 시작")
     print("=" * 60)
 
     last_id = load_last_post_id()
@@ -560,7 +498,7 @@ def check_latest_notices():
     )
 
     # --------------------------------------------------------
-    summarized_posts = []
+    new_notices = []
 
     # --------------------------------------------------------
     # 신규 공지 처리
@@ -578,56 +516,23 @@ def check_latest_notices():
             post["url"]
         )
 
-        # 상세 페이지
-        content = get_post_detail(
-            post
-        )
-
-        print(
-            f"본문 길이: {len(content)}"
-        )
-
-        # Gemini 요약
-        try:
-            summary = summarize_with_gemini(
-                post["title"],
-                content
-            )
-        except Exception as error:
-            # Gemini outages should not prevent the remaining notices from
-            # being emailed. Keep the source link so the notice is still usable.
-            print(
-                f"Gemini 요약 실패: {type(error).__name__}: {error}"
-            )
-            summary = (
-                "요약을 생성하지 못했습니다. 원문을 확인해 주세요.\n"
-                f"원문: {post['url']}"
-            )
-
-        print()
-        print("Gemini 요약:")
-        print(summary)
-
-        summarized_posts.append((post, summary))
-
-        # API 호출 간격
-        time.sleep(1.5)
+        new_notices.append(post)
 
     # --------------------------------------------------------
     # 이메일 전송 성공 후 기준 ID 업데이트
     # --------------------------------------------------------
 
-    send_notice_email(summarized_posts)
+    send_notice_email(new_notices)
 
     save_last_post_id(
-        max(post["id"] for post, _ in summarized_posts)
+        max(post["id"] for post in new_notices)
     )
 
     print()
     print("=" * 60)
     print(
         f"기준 ID 업데이트 완료: "
-        f"{max(post['id'] for post, _ in summarized_posts)}"
+        f"{max(post['id'] for post in new_notices)}"
     )
     print("=" * 60)
 
