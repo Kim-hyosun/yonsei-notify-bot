@@ -1,9 +1,6 @@
 import os
 import re
-import smtplib
-import ssl
 import time
-from email.message import EmailMessage
 from urllib.parse import urljoin
 
 import requests
@@ -15,9 +12,9 @@ from bs4 import BeautifulSoup
 # ============================================================
 
 BOARD_URL = os.environ.get("BOARD_URL")
-GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS")
-GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL")
+RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", "Yonsei Notice <onboarding@resend.dev>")
 LAST_POST_FILE = os.environ.get("LAST_POST_FILE", "last_post.txt")
 
 
@@ -32,8 +29,7 @@ REQUEST_TIMEOUT = 20
 def validate_env():
     required = {
         "BOARD_URL": BOARD_URL,
-        "GMAIL_ADDRESS": GMAIL_ADDRESS,
-        "GMAIL_APP_PASSWORD": GMAIL_APP_PASSWORD,
+        "RESEND_API_KEY": RESEND_API_KEY,
         "NOTIFY_EMAIL": NOTIFY_EMAIL,
     }
 
@@ -318,69 +314,75 @@ def get_post_detail(post):
 
 
 # ============================================================
-# Gmail 이메일 전송
+# Resend 이메일 전송
 # ============================================================
 
 def send_notice_email(posts):
-    message = EmailMessage()
-    message["From"] = GMAIL_ADDRESS
-    message["To"] = NOTIFY_EMAIL
-    message["Subject"] = f"[연세대 헤드위그] {len(posts)}건"
+    text_sections = ["새 공지입니다.\n"]
+    html_items = []
 
-    sections = ["새 공지입니다."]
     for post in posts:
-        sections.extend([
+        text_sections.extend([
+            f"- {post['title']}",
+            f"  {post['url']}",
             "",
-            post["title"],
-            post["url"],
         ])
-    message.set_content("\n".join(sections))
+        html_items.append(
+            f"<li style='margin-bottom: 12px;'>"
+            f"<strong>{post['title']}</strong><br>"
+            f"<a href='{post['url']}' target='_blank'>{post['url']}</a>"
+            f"</li>"
+        )
 
-    context = ssl.create_default_context()
-    # GitHub-hosted runners or network routes can drop the implicit-SSL
-    # connection on port 465. Try Gmail's STARTTLS endpoint on 587 as well.
-    connection_methods = (
-        ("STARTTLS", 587),
-        ("SSL", 465),
+    text_content = "\n".join(text_sections)
+    html_content = (
+        "<h3>새 공지사항이 등록되었습니다.</h3>"
+        f"<ul style='line-height: 1.6;'>{''.join(html_items)}</ul>"
     )
+
+    payload = {
+        "from": RESEND_FROM_EMAIL,
+        "to": [NOTIFY_EMAIL],
+        "subject": f"[연세대 헤드위그] 새 공지 {len(posts)}건",
+        "text": text_content,
+        "html": html_content,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {RESEND_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
     errors = []
 
-    for security, port in connection_methods:
-        for attempt in range(1, 4):
-            try:
-                if security == "STARTTLS":
-                    with smtplib.SMTP(
-                        "smtp.gmail.com",
-                        port,
-                        timeout=REQUEST_TIMEOUT
-                    ) as smtp:
-                        smtp.ehlo()
-                        smtp.starttls(context=context)
-                        smtp.ehlo()
-                        smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-                        smtp.send_message(message)
-                else:
-                    with smtplib.SMTP_SSL(
-                        "smtp.gmail.com",
-                        port,
-                        context=context,
-                        timeout=REQUEST_TIMEOUT
-                    ) as smtp:
-                        smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-                        smtp.send_message(message)
+    for attempt in range(1, 4):
+        try:
+            response = requests.post(
+                "https://api.resend.com/emails",
+                headers=headers,
+                json=payload,
+                timeout=REQUEST_TIMEOUT,
+            )
 
-                print(f"이메일 전송 성공: {NOTIFY_EMAIL}")
+            if response.status_code in (200, 201):
+                res_data = response.json()
+                print(f"이메일 전송 성공: {NOTIFY_EMAIL} (Resend ID: {res_data.get('id', 'N/A')})")
                 return
-            except (smtplib.SMTPException, OSError) as error:
-                errors.append(f"{security} {port}회차 {attempt}: {error}")
-                print(f"Gmail SMTP {security} {port} 연결 실패 ({attempt}/3): {error}")
-                if attempt < 3:
-                    time.sleep(attempt * 2)
+            else:
+                error_msg = f"HTTP {response.status_code}: {response.text}"
+                errors.append(f"{attempt}회차: {error_msg}")
+                print(f"Resend API 전송 실패 ({attempt}/3): {error_msg}")
+        except requests.RequestException as error:
+            errors.append(f"{attempt}회차 연결 오류: {error}")
+            print(f"Resend API 연결 실패 ({attempt}/3): {error}")
+
+        if attempt < 3:
+            time.sleep(attempt * 2)
 
     raise RuntimeError(
-        "Gmail SMTP 전송에 실패했습니다. GMAIL_ADDRESS가 전체 Gmail 주소인지, "
-        "GMAIL_APP_PASSWORD가 2단계 인증 후 발급한 앱 비밀번호인지 확인하세요. "
-        "포트별 오류: " + " | ".join(errors)
+        "Resend API 이메일 전송에 실패했습니다. "
+        "RESEND_API_KEY가 올바른지, NOTIFY_EMAIL이 Resend 가입 이메일인지 확인하세요. "
+        "상세 오류: " + " | ".join(errors)
     )
 
 

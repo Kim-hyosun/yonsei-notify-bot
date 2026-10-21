@@ -61,9 +61,8 @@ jobs:
           # Yonsei
           BOARD_URL: ${{ secrets.BOARD_URL }}
 
-          # Gmail SMTP
-          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          # Resend API
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
 
           # State file
