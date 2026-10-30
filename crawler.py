@@ -155,8 +155,9 @@ def get_posts_from_page(offset=0):
         if not title:
             continue
 
+        base_board_url = BOARD_URL or f"{BASE_URL}/gse/board/notice.do"
         full_url = urljoin(
-            BASE_URL,
+            base_board_url,
             href
         )
 
